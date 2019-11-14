@@ -1,4 +1,6 @@
 require 'active_record'
+require 'byebug'
+require 'httparty'
 require 'tty-spinner'
 require 'yaml'
 require 'ziptz'
@@ -8,7 +10,10 @@ class ZipCode < ActiveRecord::Base
   self.primary_key = 'ZipCode'
   establish_connection YAML.safe_load(File.open('database.yml'))
 
+  alias_attribute :city, :City
   alias_attribute :day_light_saving, :DayLightSaving
+  alias_attribute :latitude, :Latitude
+  alias_attribute :longitude, :Longitude
   alias_attribute :state, :State
   alias_attribute :time_zone, :TimeZone
   alias_attribute :zip_code, :ZipCode
@@ -24,16 +29,16 @@ class ZipCode < ActiveRecord::Base
       next if zip.time_zone.blank? || zip.day_light_saving.blank?
 
       data[zip.zip_code] ||= {}
-      data[zip.zip_code][:tz] ||= begin
-        if zip.state == 'AZ' && zip.day_light_saving == 'N'
-          'America/Phoenix'
-        elsif zip.state == 'AK' && zip.time_zone == '10'
-          'America/Adak'
-        else
-          Ziptz::TZ_INFO[zip.time_zone][:name]
-        end
+      if %w[APO DPO FPO].include?(zip.city) && zip.latitude.zero? && zip.longitude.zero?
+        data[zip.zip_code][:tz] = 'APO/FPO (time zone unknown)'
+      elsif zip.latitude.zero? && zip.longitude.zero?
+        data[zip.zip_code][:tz] = nil
+      else
+        response = HTTParty.get("http://localhost:3001/?lat=#{zip.latitude}&lng=#{zip.longitude}")
+        data[zip.zip_code][:tz] = response['results'].first
       end
-      data[zip.zip_code][:dst] ||= zip.day_light_saving
+
+      data[zip.zip_code][:dst] = zip.day_light_saving
     end
     spinner.update message: "Retrieving zip codes from database (#{data.size} records)"
     spinner.success
